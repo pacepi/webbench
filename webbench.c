@@ -471,9 +471,10 @@ nexttry :
         }
 
         if(rlen != write(s, req, rlen)) {
-            perror("write");
-			if (rlen != EINTR)
-            	failed++;
+            if (errno != EINTR) {
+                failed++;
+                perror("write");
+            }
             close(s);
             continue;
         }
@@ -492,10 +493,10 @@ nexttry :
                 i = read(s, buf, 1500);
                 /* fprintf(stderr,"%d\n",i); */
                 if(i < 0) {
-					if (i != EINTR)
-                    	failed++;
-					else
-                    	perror("read");
+                    if (errno != EINTR) {
+                        failed++;
+                        perror("read");
+                    }
                     close(s);
                     goto nexttry;
                 } else if(i == 0)
