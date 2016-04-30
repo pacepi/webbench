@@ -51,6 +51,8 @@ int mypipe[2];
 char host[MAXHOSTNAMELEN];
 #define REQUEST_SIZE 2048
 char request[REQUEST_SIZE];
+char *cookie = NULL;
+char *check = NULL;
 
 static const struct option long_options[] =
 {
@@ -68,6 +70,8 @@ static const struct option long_options[] =
     {"version", no_argument, NULL, 'V'},
     {"proxy", required_argument, NULL, 'p'},
     {"clients", required_argument, NULL, 'c'},
+    {"cookie", required_argument, NULL, 'k'},
+    {"check", required_argument, NULL, 'C'},
     {NULL, 0, NULL , 0}
 };
 
@@ -90,6 +94,8 @@ static void usage(void)
             "  -t|--time <sec>          Run benchmark for <sec> seconds. Default 30.\n"
             "  -p|--proxy <server:port> Use proxy server for request.\n"
             "  -c|--clients <n>         Run <n> HTTP clients at once. Default one.\n"
+            "  -k|--cookie <n>          Run with cookie. Default NULL.\n"
+            "  -C|--check <n>           Check response. Default NULL.\n"
             "  -9|--http09              Use HTTP/0.9 style requests.\n"
             "  -1|--http10              Use HTTP/1.0 protocol.\n"
             "  -2|--http11              Use HTTP/1.1 protocol.\n"
@@ -114,7 +120,7 @@ static int parse_command(int argc, char *argv[])
         return 2;
     }
 
-    while((opt = getopt_long(argc, argv, "912Vfrt:p:c:?h", long_options, &options_index)) != EOF )
+    while((opt = getopt_long(argc, argv, "912Vfrt:p:c:k:C:?h", long_options, &options_index)) != EOF )
     {
         switch(opt)
         {
@@ -171,6 +177,12 @@ static int parse_command(int argc, char *argv[])
         case 'c':
             clients = atoi(optarg);
             break;
+        case 'k':
+            cookie = optarg;
+            break;
+        case 'C':
+            check = optarg;
+            break;
         }
     }
 
@@ -188,7 +200,7 @@ int main(int argc, char *argv[])
     }
 
     if(clients == 0)
-        clients=1;
+        clients = 1;
 
     if(benchtime == 0)
         benchtime = 60;
@@ -314,7 +326,7 @@ void build_request(const char *url)
             strncpy(host, url + i, strcspn(url + i, "/"));
         }
         // printf("Host=%s\n",host);
-        strcat(request+strlen(request),url+i+strcspn(url+i,"/"));
+        strcat(request + strlen(request),url + i + strcspn(url + i, "/"));
     } else {
         // printf("ProxyHost=%s\nProxyPort=%d\n",proxyhost,proxyport);
         strcat(request, url);
@@ -331,9 +343,13 @@ void build_request(const char *url)
         strcat(request, host);
         strcat(request, "\r\n");
     }
-    if(force_reload && proxyhost != NULL)
-    {
+    if(force_reload && proxyhost != NULL) {
         strcat(request, "Pragma: no-cache\r\n");
+    }
+    if (cookie != NULL) {
+        strcat(request, "Cookie: ");
+        strcat(request, cookie);
+        strcat(request, "\r\n");
     }
     if(http10 > 1)
         strcat(request, "Connection: close\r\n");
@@ -433,7 +449,7 @@ static int bench(void)
 
         fclose(f);
 
-        printf("\nSpeed=%d pages/min, %d bytes/sec.\nRequests: %d susceed, %d failed.\n", (int)((speed+failed) / (benchtime / 60.0f)), (int)(bytes / (float)benchtime), speed, failed);
+        printf("\nSpeed=%d pages/min, %d bytes/sec.\nRequests: %d susceed, %d failed.\n", (int)((speed + failed) / (benchtime / 60.0f)), (int)(bytes / (float)benchtime), speed, failed);
     }
     return i;
 }
@@ -441,8 +457,8 @@ static int bench(void)
 void benchcore(const char *host,const int port,const char *req)
 {
     int rlen;
-    char buf[1500];
-    int s,i;
+    char buf[8192];
+    int s, i = 0;
     struct sigaction sa;
 
     /* setup alarm signal handler */
@@ -487,10 +503,11 @@ nexttry :
             }
         if(force == 0) {
             /* read all available data from socket */
+            int index = 0;
             while(1) {
                 if(timerexpired)
                     break;
-                i = read(s, buf, 1500);
+                i = read(s, buf + index, sizeof(buf) - index);
                 /* fprintf(stderr,"%d\n",i); */
                 if(i < 0) {
                     if (errno != EINTR) {
@@ -501,8 +518,14 @@ nexttry :
                     goto nexttry;
                 } else if(i == 0)
                     break;
-                else
-                    bytes+=i;
+                else {
+                    bytes += i;
+                    index += i;
+                }
+            }
+            if ((check != NULL) && (strstr(buf, check) == NULL)) {
+                failed++;
+                fprintf(stderr, "check %s fail\n", check);
             }
         }
         if(close(s)) {
